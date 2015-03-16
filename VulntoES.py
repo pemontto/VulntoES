@@ -12,20 +12,23 @@ import sys
 import getopt
 import xml.etree.ElementTree as xml
 import re
+from pytz import timezone
 #import socket
 #import pprint
 
-
+tz='utc'
 
 class NessusES:
 	"This class will parse an Nessus v2 XML file and send it to Elasticsearch"
 
-	def __init__(self, input_file,es_ip,index_name):
+	def __init__(self, input_file,es_ip,index_name,tz):
 		self.input_file = input_file
 		self.tree = self.__importXML()
 		self.root = self.tree.getroot()
 		self.es = Elasticsearch([{'host':es_ip}])
 		self.index_name = index_name
+		self.tz=tz
+		tz=timezone(tz)
 
 
 	def displayInputFileName(self):
@@ -52,6 +55,12 @@ class NessusES:
 					for child in tag.getchildren():
 						if child.attrib['name'] == 'HOST_END':
 							host_item['time'] = child.text
+							host_item['time'] = datetime.strptime(host_item['time'], '%a %b %d %H:%M:%S %Y')
+							host_item['time'] = tz.localize(host_item['time'])
+							if timzezone == 'utc' :
+								host_item['time'] = datetime.strftime(host_item['time'], '%Y-%m-%dT%H:%M:%S.000Z')
+							else :
+								host_item['time'] = datetime.strftime(host_item['time'], '%Y-%m-%dT%H:%M:%S.000%z')
 						if child.attrib['name'] == 'operating-system':
 							host_item['operating-system'] = child.text
 						if child.attrib['name'] == 'mac-address':
@@ -252,7 +261,7 @@ class OpenVasES:
 			if result.find('severity') is not None:
 				issueDict['severity'] = unicode(result.find('severity').text)
 			if result.find('scan_nvt_version') is not None:
-                            issueDict['scan_nvt_version'] = unicode(result.find('scan_nvt_version').text)
+				issueDict['scan_nvt_version'] = unicode(result.find('scan_nvt_version').text)
 			if issueDict:
 				issuesList.append(issueDict)
 
@@ -305,11 +314,16 @@ class OpenVasES:
 
 
 def usage():
-		print "Usage: VulntoES.py [-i input_file | input_file=input_file] [-e elasticsearch_ip | es_ip=es_ip_address] [-I index_name] [-r report_type | --report_type=type] [-h | --help]"
+	print """
+Usage: VulntoES.py [-i input_file | input_file=input_file] [-e elasticsearch_ip | es_ip=es_ip_address] [-I index_name] [-r report_type | --report_type=type] [-t tz | --timezone=tz] [-h | --help]
+Report Type: can be any of [nessus|nikto|nmap|openvas]
+Timezones: e.g. 'Australia/Sydney' (http://en.wikipedia.org/wiki/List_of_tz_database_time_zones)
+"""
+		
 def main():
 
-	letters = 'i:I:e:r:h' #input_file, index_name es_ip_address, report_type, create_sql, create_xml, help
-	keywords = ['input-file=', 'index_name=', 'es_ip=','report_type=', 'help' ]
+	letters = 'i:I:e:r:h:t' #input_file, index_name es_ip_address, report_type, create_sql, create_xml, help
+	keywords = ['input-file=', 'index_name=', 'es_ip=','report_type=', 'timezone=', 'help' ]
 	try:
 		opts, extraparams = getopt.getopt(sys.argv[1:], letters, keywords)
 	except getopt.GetoptError, err:
@@ -320,25 +334,30 @@ def main():
 	es_ip = ''
 	report_type = ''
 	index_name = ''
+	tz='utc'
 
 	for o,p in opts:
-	  if o in ['-i','--input-file=']:
-		in_file = p
-	  elif o in ['-r', '--report_type=']:
-	  	report_type = p
-	  elif o in ['-e', '--es_ip=']:
-	  	es_ip=p
-	  elif o in ['-I', '--index_name=']:
-		index_name=p
-	  elif o in ['-h', '--help']:
-		 usage()
-		 sys.exit()
+		if o in ['-i','--input-file=']:
+			in_file = p
+		elif o in ['-r', '--report_type=']:
+			report_type = p
+		elif o in ['-e', '--es_ip=']:
+			es_ip=p
+		elif o in ['-I', '--index_name=']:
+			index_name=p
+		elif o in ['-t', '--timezone=']:
+			tz=p
+			print tz
+		elif o in ['-h', '--help']:
+			usage()
+			sys.exit()
 
 
 	if (len(sys.argv) < 1):
 		usage()
 		sys.exit()
 
+	print tz
 	try:
 		with open(in_file) as f: pass
 	except IOError as e:
@@ -347,7 +366,8 @@ def main():
 
 	if report_type.lower() == 'nessus':
 		print "Sending Nessus data to Elasticsearch"
-		np = NessusES(in_file,es_ip,index_name)
+		print tz
+		np = NessusES(in_file,es_ip,index_name,tz)
 		np.toES()
 	elif report_type.lower() == 'nikto':
 		print "Sending Nikto data to Elasticsearch"
